@@ -1,6 +1,10 @@
 import streamlit as st
 from docxtpl import DocxTemplate
 import io
+import os
+
+# Название файла шаблона, который лежит на GitHub
+TEMPLATE_NAME = "образец отчета.docx"
 
 # Настройка страницы браузера
 st.set_page_config(page_title="Генератор Отчетов - Гарант Оценка", layout="wide")
@@ -8,8 +12,14 @@ st.set_page_config(page_title="Генератор Отчетов - Гарант 
 st.title("🚗 Рабочее место оценщика")
 st.markdown("Заполните данные ниже для автоматической генерации отчета об оценке ущерба.")
 
-# Загрузка шаблона
-uploaded_file = st.file_uploader("1. Загрузите шаблон отчета (template.docx)", type="docx")
+# Автоматическая проверка шаблона
+if os.path.exists(TEMPLATE_NAME):
+    st.success(f"✅ Базовый шаблон отчета (`{TEMPLATE_NAME}`) успешно подключен автоматически.")
+    template_source = TEMPLATE_NAME
+else:
+    # Если файла нет на GitHub, сработает запасной вариант с ручной загрузкой
+    st.warning(f"⚠️ Файл `{TEMPLATE_NAME}` не найден в репозитории. Загрузите его вручную ниже:")
+    template_source = st.file_uploader("Загрузите шаблон отчета (template.docx)", type="docx")
 
 st.header("2. Ввод данных")
 
@@ -46,10 +56,9 @@ st.subheader("Описание")
 damage_desc = st.text_area("Характеристика повреждений (при осмотре установлено):", height=100)
 repair_desc = st.text_area("Требуемый ремонт (для восстановления требуется):", height=100)
 
-# Логика генерации с новой библиотекой
-if uploaded_file is not None:
+# Логика генерации
+if template_source is not None:
     if st.button("СГЕНЕРИРОВАТЬ ОТЧЕТ", type="primary"):
-        # ВАЖНО: Для DocxTemplate ключи пишутся просто текстом, БЕЗ {{ }}
         context = {
             "REPORT_NUM": report_num,
             "CONTRACT_NUM": contract_num,
@@ -72,13 +81,13 @@ if uploaded_file is not None:
         }
         
         try:
-            # Инициализируем шаблон с помощью docxtpl
-            doc = DocxTemplate(uploaded_file)
+            # Загружаем шаблон (автоматический из папки или ручной из uploader)
+            doc = DocxTemplate(template_source)
             
-            # Магия: библиотека сама находит все {{ТЕГИ}} и заменяет их
+            # Заполняем данными
             doc.render(context)
             
-            # Сохраняем результат
+            # Сохраняем результат в память
             buffer = io.BytesIO()
             doc.save(buffer)
             buffer.seek(0)
@@ -96,5 +105,3 @@ if uploaded_file is not None:
             
         except Exception as e:
             st.error(f"Произошла ошибка при обработке файла: {e}")
-else:
-    st.info("Пожалуйста, перетащите или выберите файл шаблона (template.docx) в самом начале страницы.")
