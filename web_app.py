@@ -8,7 +8,7 @@ import io
 import os
 
 # Название файла шаблона
-TEMPLATE_NAME = "образец отчета.docx"
+TEMPLATE_NAME = "образец отчета1.docx"
 
 st.set_page_config(page_title="Генератор Отчетов - Гарант Оценка", layout="wide")
 
