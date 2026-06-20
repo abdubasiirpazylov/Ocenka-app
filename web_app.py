@@ -129,4 +129,123 @@ if uploaded_photos:
             if key not in st.session_state:
                 st.session_state[key] = idx + 1
 
-    file_dict = {f
+    file_dict = {f.name: f for f in uploaded_photos}
+
+    st.write("Настройте подписи и порядок фотографий:")
+    
+    for i, filename in enumerate(st.session_state.photo_order):
+        photo = file_dict[filename]
+        
+        with st.container():
+            c_img, c_controls = st.columns([1, 2])
+            
+            with c_img:
+                st.image(photo, use_container_width=True)
+                
+                # Выпадающий список синхронизирован с session_state
+                st.selectbox(
+                    "📍 Позиция в отчете:",
+                    options=list(range(1, len(st.session_state.photo_order) + 1)),
+                    key=f"pos_{filename}", # Streamlit сам подтянет нужную цифру отсюда
+                    on_change=move_photo,
+                    args=(filename, i)
+                )
+
+            with c_controls:
+                selected_tags = st.multiselect("Шаблонные фразы:", CAPTION_OPTIONS, key=f"tags_{filename}")
+                custom_text = st.text_input("Свой текст (дополнит или заменит шаблон):", key=f"custom_{filename}")
+                
+                final_caption_parts = []
+                if selected_tags:
+                    final_caption_parts.append(", ".join(selected_tags))
+                if custom_text:
+                    final_caption_parts.append(custom_text)
+                    
+                final_caption = ", ".join(final_caption_parts)
+                
+                if final_caption:
+                    st.caption(f"📝 Итоговая подпись в отчете: **{final_caption}**")
+                    
+            st.divider() 
+            
+            photo_data_list.append({"file": photo, "caption": final_caption})
+
+if template_source is not None:
+    if st.button("СГЕНЕРИРОВАТЬ ОТЧЕТ", type="primary"):
+        try:
+            doc = DocxTemplate(template_source)
+            subdoc = doc.new_subdoc()
+            
+            if photo_data_list:
+                table = subdoc.add_table(rows=0, cols=2)
+                table.style = 'Table Grid'
+                
+                for i in range(0, len(photo_data_list), 2):
+                    cells = table.add_row().cells
+                    
+                    img1_file = photo_data_list[i]["file"]
+                    img1_file.seek(0)
+                    
+                    p1 = cells[0].paragraphs[0]
+                    p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    run1 = p1.add_run()
+                    run1.add_picture(img1_file, width=Mm(80))
+                    run1.add_break()
+                    run1.add_text(photo_data_list[i]["caption"])
+                    
+                    p2 = cells[1].paragraphs[0]
+                    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    if i + 1 < len(photo_data_list):
+                        img2_file = photo_data_list[i+1]["file"]
+                        img2_file.seek(0)
+                        
+                        run2 = p2.add_run()
+                        run2.add_picture(img2_file, width=Mm(80))
+                        run2.add_break()
+                        run2.add_text(photo_data_list[i+1]["caption"])
+            
+            context = {
+                "REPORT_NUM": report_num,
+                "CONTRACT_NUM": contract_num,
+                "DATE": date,
+                "CUSTOMER_NAME": customer,
+                "ADDRESS": address,
+                "CAR_MODEL": car_model,
+                "REG_NUM": reg_num,
+                "VIN": vin,
+                "TECH_PASSPORT": tech_passport,
+                "YEAR": year,
+                "ENGINE_VOL": engine_vol,
+                "COLOR": color,
+                "BODY_TYPE": body_type,
+                "STEERING": steering,
+                "TOTAL_SUM_NUM": sum_num,
+                "TOTAL_SUM_WORDS": sum_words,
+                "DAMAGE_DESC": format_as_bullets(damage_desc),
+                "REPAIR_DESC": format_as_bullets(repair_desc),
+                "PHOTO_TABLE": subdoc 
+            }
+            
+            doc.render(context)
+            
+            settings = doc.docx.settings.element
+            update_fields = OxmlElement('w:updateFields')
+            update_fields.set(qn('w:val'), 'true')
+            settings.append(update_fields)
+            
+            buffer = io.BytesIO()
+            doc.save(buffer)
+            buffer.seek(0)
+            
+            st.success("✅ Отчет успешно сгенерирован!")
+            
+            file_name = f"Отчет_{customer if customer else 'Новый_клиент'}.docx"
+            st.download_button(
+                label="📥 СКАЧАТЬ ГОТОВЫЙ ОТЧЕТ",
+                data=buffer,
+                file_name=file_name,
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+            
+        except Exception as e:
+            st.error(f"Произошла ошибка при обработке файла: {e}")
