@@ -94,7 +94,6 @@ uploaded_photos = st.file_uploader("Загрузите фотографии", ty
 photo_data_list = []
 
 if uploaded_photos:
-    # Логика сохранения порядка файлов при добавлении/удалении
     current_filenames = [f.name for f in uploaded_photos]
     if set(current_filenames) != set(st.session_state.last_files):
         new_order = [f for f in st.session_state.photo_order if f in current_filenames]
@@ -102,33 +101,35 @@ if uploaded_photos:
         st.session_state.photo_order = new_order + new_files
         st.session_state.last_files = current_filenames
 
-    # Создаем словарь для быстрого поиска файла по имени
     file_dict = {f.name: f for f in uploaded_photos}
 
     st.write("Настройте подписи и порядок фотографий:")
     
-    # Отрисовываем фото в том порядке, который сохранен в сессии
     for i, filename in enumerate(st.session_state.photo_order):
         photo = file_dict[filename]
         
         with st.container():
             c_img, c_controls = st.columns([1, 2])
             
-            # Левая колонка: Картинка и кнопки управления
             with c_img:
                 st.image(photo, use_container_width=True)
                 
-                btn_up, btn_down = st.columns(2)
-                # Кнопка "Вверх"
-                if btn_up.button("⬆️ Вверх", key=f"up_{filename}", disabled=(i == 0)):
-                    st.session_state.photo_order[i], st.session_state.photo_order[i-1] = st.session_state.photo_order[i-1], st.session_state.photo_order[i]
+                # --- НОВАЯ УМНАЯ СОРТИРОВКА ---
+                # Выпадающий список с номерами позиций (от 1 до количества фото)
+                new_pos = st.selectbox(
+                    "📍 Позиция в отчете:",
+                    options=list(range(1, len(st.session_state.photo_order) + 1)),
+                    index=i,
+                    key=f"pos_{filename}"
+                )
+                
+                # Если пользователь выбрал новую цифру, меняем порядок и обновляем страницу
+                if new_pos - 1 != i:
+                    moved_file = st.session_state.photo_order.pop(i)
+                    st.session_state.photo_order.insert(new_pos - 1, moved_file)
                     st.rerun()
-                # Кнопка "Вниз"
-                if btn_down.button("⬇️ Вниз", key=f"down_{filename}", disabled=(i == len(st.session_state.photo_order)-1)):
-                    st.session_state.photo_order[i], st.session_state.photo_order[i+1] = st.session_state.photo_order[i+1], st.session_state.photo_order[i]
-                    st.rerun()
+                # ------------------------------
 
-            # Правая колонка: Настройка подписей
             with c_controls:
                 selected_tags = st.multiselect("Шаблонные фразы:", CAPTION_OPTIONS, key=f"tags_{filename}")
                 custom_text = st.text_input("Свой текст (дополнит или заменит шаблон):", key=f"custom_{filename}")
@@ -144,9 +145,8 @@ if uploaded_photos:
                 if final_caption:
                     st.caption(f"📝 Итоговая подпись в отчете: **{final_caption}**")
                     
-            st.divider() # Горизонтальная линия для красоты между фотками
+            st.divider() 
             
-            # Добавляем готовые данные в список для генерации Word
             photo_data_list.append({"file": photo, "caption": final_caption})
 
 if template_source is not None:
