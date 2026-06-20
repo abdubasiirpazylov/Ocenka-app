@@ -8,7 +8,7 @@ import io
 import os
 
 # Название файла шаблона
-TEMPLATE_NAME = "образец отчета1.docx"
+TEMPLATE_NAME = "образец отчета.docx"
 
 st.set_page_config(page_title="Генератор Отчетов - Гарант Оценка", layout="wide")
 
@@ -70,66 +70,83 @@ def format_as_bullets(text):
 
 st.header("3. Фотографии автомобиля")
 
-# Откорректированный и дополненный список для конструктора
 CAPTION_OPTIONS = [
-    # Ракурсы (добавил базу)
     "Вид спереди", "Вид сзади", "Вид слева", "Вид справа",
     "VIN-код", "Показания одометра", "Обзорный снимок салона",
-    
-    # Вид дефекта (из списка + парочка частых)
     "вмятина", "вытяжение", "гофра", "деформация", "изгиб", 
     "повреждение ЛКП", "потертость", "разрушение", "разрыв", 
     "раскол", "складка", "царапина", "скол", "перекос",
-    
-    # Характер деформации
     "без образования видимых складок", "с глубокой вытяжкой металла", 
     "с нарушением геометрии кромок", "с нарушением геометрии ребер жесткости", 
     "с незначительной вытяжкой металла", "с образованием незначительных складок", 
     "с образованием острых складок", "с образованием плавных складок", "с образованием трещин",
-    
-    # Площадь
     "на площади менее 10%", "на площади от 10 до 20%", 
     "на площади от 20 до 30%", "на площади от 30 до 40%", "на площади более 40%"
 ]
+
+# Инициализация состояния для хранения порядка фотографий
+if "photo_order" not in st.session_state:
+    st.session_state.photo_order = []
+if "last_files" not in st.session_state:
+    st.session_state.last_files = []
 
 uploaded_photos = st.file_uploader("Загрузите фотографии", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 photo_data_list = []
 
 if uploaded_photos:
-    st.write("Настройте подписи для каждой фотографии:")
-    cols = st.columns(2)
+    # Логика сохранения порядка файлов при добавлении/удалении
+    current_filenames = [f.name for f in uploaded_photos]
+    if set(current_filenames) != set(st.session_state.last_files):
+        new_order = [f for f in st.session_state.photo_order if f in current_filenames]
+        new_files = [f for f in current_filenames if f not in new_order]
+        st.session_state.photo_order = new_order + new_files
+        st.session_state.last_files = current_filenames
+
+    # Создаем словарь для быстрого поиска файла по имени
+    file_dict = {f.name: f for f in uploaded_photos}
+
+    st.write("Настройте подписи и порядок фотографий:")
     
-    for index, photo in enumerate(uploaded_photos):
-        col = cols[index % 2]
-        with col:
-            st.image(photo, use_container_width=True)
+    # Отрисовываем фото в том порядке, который сохранен в сессии
+    for i, filename in enumerate(st.session_state.photo_order):
+        photo = file_dict[filename]
+        
+        with st.container():
+            c_img, c_controls = st.columns([1, 2])
             
-            # Мультивыбор: можно выбрать несколько вариантов (они соберутся через запятую)
-            selected_tags = st.multiselect(
-                f"Шаблонные фразы:", 
-                CAPTION_OPTIONS, 
-                key=f"tags_{index}"
-            )
-            
-            # Ручной ввод: можно дописать свои слова (например, "на передней правой двери")
-            custom_text = st.text_input(
-                f"Свой текст (дополнит или заменит шаблон):", 
-                key=f"custom_{index}"
-            )
-            
-            # Склеиваем выбранные шаблоны и ручной текст
-            final_caption_parts = []
-            if selected_tags:
-                final_caption_parts.append(", ".join(selected_tags))
-            if custom_text:
-                final_caption_parts.append(custom_text)
+            # Левая колонка: Картинка и кнопки управления
+            with c_img:
+                st.image(photo, use_container_width=True)
                 
-            final_caption = ", ".join(final_caption_parts)
+                btn_up, btn_down = st.columns(2)
+                # Кнопка "Вверх"
+                if btn_up.button("⬆️ Вверх", key=f"up_{filename}", disabled=(i == 0)):
+                    st.session_state.photo_order[i], st.session_state.photo_order[i-1] = st.session_state.photo_order[i-1], st.session_state.photo_order[i]
+                    st.rerun()
+                # Кнопка "Вниз"
+                if btn_down.button("⬇️ Вниз", key=f"down_{filename}", disabled=(i == len(st.session_state.photo_order)-1)):
+                    st.session_state.photo_order[i], st.session_state.photo_order[i+1] = st.session_state.photo_order[i+1], st.session_state.photo_order[i]
+                    st.rerun()
+
+            # Правая колонка: Настройка подписей
+            with c_controls:
+                selected_tags = st.multiselect("Шаблонные фразы:", CAPTION_OPTIONS, key=f"tags_{filename}")
+                custom_text = st.text_input("Свой текст (дополнит или заменит шаблон):", key=f"custom_{filename}")
+                
+                final_caption_parts = []
+                if selected_tags:
+                    final_caption_parts.append(", ".join(selected_tags))
+                if custom_text:
+                    final_caption_parts.append(custom_text)
+                    
+                final_caption = ", ".join(final_caption_parts)
+                
+                if final_caption:
+                    st.caption(f"📝 Итоговая подпись в отчете: **{final_caption}**")
+                    
+            st.divider() # Горизонтальная линия для красоты между фотками
             
-            # Показываем живое превью итоговой подписи
-            if final_caption:
-                st.caption(f"📝 Итоговая подпись в отчете: **{final_caption}**")
-            
+            # Добавляем готовые данные в список для генерации Word
             photo_data_list.append({"file": photo, "caption": final_caption})
 
 if template_source is not None:
@@ -145,7 +162,6 @@ if template_source is not None:
                 for i in range(0, len(photo_data_list), 2):
                     cells = table.add_row().cells
                     
-                    # Левая ячейка
                     img1_file = photo_data_list[i]["file"]
                     img1_file.seek(0)
                     
@@ -156,7 +172,6 @@ if template_source is not None:
                     run1.add_break()
                     run1.add_text(photo_data_list[i]["caption"])
                     
-                    # Правая ячейка
                     p2 = cells[1].paragraphs[0]
                     p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     if i + 1 < len(photo_data_list):
