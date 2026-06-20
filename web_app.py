@@ -89,10 +89,11 @@ if "photo_order" not in st.session_state:
     st.session_state.photo_order = []
 if "last_files" not in st.session_state:
     st.session_state.last_files = []
+if "deleted_files" not in st.session_state:
+    st.session_state.deleted_files = set()
 
-# --- ИСПРАВЛЕННЫЙ И БЕЗОПАСНЫЙ КОЛБЭК ---
+# --- КОЛБЭК ДЛЯ ПЕРЕМЕЩЕНИЯ ---
 def move_photo(file_name, current_index):
-    # Безопасно получаем новое значение, выбранное пользователем
     new_val = st.session_state.get(f"pos_{file_name}")
     if new_val is None:
         return
@@ -100,12 +101,19 @@ def move_photo(file_name, current_index):
     new_index = new_val - 1
     
     if new_index != current_index:
-        # 1. Перемещаем сам файл в логическом списке
         item = st.session_state.photo_order.pop(current_index)
         st.session_state.photo_order.insert(new_index, item)
         
-        # 2. Вместо удаления ключей, принудительно переписываем ВСЕМ фотографиям
-        # их новые правильные позиции в памяти браузера. Это полностью убирает баг "каши".
+        for idx, fname in enumerate(st.session_state.photo_order):
+            st.session_state[f"pos_{fname}"] = idx + 1
+
+# --- НОВЫЙ КОЛБЭК ДЛЯ УДАЛЕНИЯ ---
+def delete_photo(filename):
+    if filename in st.session_state.photo_order:
+        st.session_state.photo_order.remove(filename)
+        st.session_state.deleted_files.add(filename) # Запоминаем, что файл исключен
+        
+        # Пересчитываем позиции для оставшихся фото
         for idx, fname in enumerate(st.session_state.photo_order):
             st.session_state[f"pos_{fname}"] = idx + 1
 # ----------------------------------------
@@ -116,14 +124,29 @@ photo_data_list = []
 if uploaded_photos:
     current_filenames = [f.name for f in uploaded_photos]
     
-    # Если загрузили новые фото или удалили старые
+    # Синхронизация файлов при загрузке или удалении из окна Streamlit
     if set(current_filenames) != set(st.session_state.last_files):
-        new_order = [f for f in st.session_state.photo_order if f in current_filenames]
-        new_files = [f for f in current_filenames if f not in new_order]
-        st.session_state.photo_order = new_order + new_files
+        new_files = [f for f in current_filenames if f not in st.session_state.last_files]
+        removed_files = [f for f in st.session_state.last_files if f not in current_filenames]
+        
+        # Добавляем новые
+        for f in new_files:
+            # Если файл был исключен, а теперь его закинули заново - восстанавливаем
+            if f in st.session_state.deleted_files:
+                st.session_state.deleted_files.remove(f)
+            if f not in st.session_state.photo_order and f not in st.session_state.deleted_files:
+                st.session_state.photo_order.append(f)
+                
+        # Убираем удаленные из верхнего окна
+        for f in removed_files:
+            if f in st.session_state.photo_order:
+                st.session_state.photo_order.remove(f)
+            if f in st.session_state.deleted_files:
+                st.session_state.deleted_files.remove(f)
+                
         st.session_state.last_files = current_filenames
         
-        # Безопасная инициализация позиций для новых фото
+        # Безопасная инициализация позиций
         for idx, fname in enumerate(st.session_state.photo_order):
             key = f"pos_{fname}"
             if key not in st.session_state:
@@ -133,7 +156,10 @@ if uploaded_photos:
 
     st.write("Настройте подписи и порядок фотографий:")
     
-    for i, filename in enumerate(st.session_state.photo_order):
+    for i, filename in enumerate(list(st.session_state.photo_order)):
+        if filename not in file_dict:
+            continue
+            
         photo = file_dict[filename]
         
         with st.container():
@@ -142,14 +168,16 @@ if uploaded_photos:
             with c_img:
                 st.image(photo, use_container_width=True)
                 
-                # Выпадающий список синхронизирован с session_state
                 st.selectbox(
                     "📍 Позиция в отчете:",
                     options=list(range(1, len(st.session_state.photo_order) + 1)),
-                    key=f"pos_{filename}", # Streamlit сам подтянет нужную цифру отсюда
+                    key=f"pos_{filename}",
                     on_change=move_photo,
                     args=(filename, i)
                 )
+                
+                # Новая кнопка удаления
+                st.button("❌ Исключить фото", key=f"del_{filename}", on_click=delete_photo, args=(filename,))
 
             with c_controls:
                 selected_tags = st.multiselect("Шаблонные фразы:", CAPTION_OPTIONS, key=f"tags_{filename}")
