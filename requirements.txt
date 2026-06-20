@@ -1,3 +1,4 @@
 streamlit
 docxtpl
-docxcompose==1.4.0
+docxcompose
+setuptools
