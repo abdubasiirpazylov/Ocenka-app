@@ -8,7 +8,7 @@ import io
 import os
 
 # Название файла шаблона
-TEMPLATE_NAME = "образец отчета1.docx"
+TEMPLATE_NAME = "образец отчета.docx"
 
 st.set_page_config(page_title="Генератор Отчетов - Гарант Оценка", layout="wide")
 
@@ -90,6 +90,23 @@ if "photo_order" not in st.session_state:
 if "last_files" not in st.session_state:
     st.session_state.last_files = []
 
+# --- КОЛБЭК ФУНКЦИЯ ДЛЯ УМНОГО ПЕРЕМЕЩЕНИЯ ---
+def move_photo(file_name, current_index):
+    # Получаем новую цифру, которую выбрал пользователь
+    new_val = st.session_state[f"pos_{file_name}"]
+    new_index = new_val - 1
+    
+    if new_index != current_index:
+        # Физически перемещаем файл в списке
+        item = st.session_state.photo_order.pop(current_index)
+        st.session_state.photo_order.insert(new_index, item)
+        
+        # Секретный трюк: удаляем память виджетов, чтобы они обновились правильно
+        keys_to_delete = [k for k in st.session_state.keys() if k.startswith("pos_")]
+        for k in keys_to_delete:
+            del st.session_state[k]
+# ---------------------------------------------
+
 uploaded_photos = st.file_uploader("Загрузите фотографии", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 photo_data_list = []
 
@@ -114,21 +131,15 @@ if uploaded_photos:
             with c_img:
                 st.image(photo, use_container_width=True)
                 
-                # --- НОВАЯ УМНАЯ СОРТИРОВКА ---
-                # Выпадающий список с номерами позиций (от 1 до количества фото)
-                new_pos = st.selectbox(
+                # Выпадающий список с вызовом колбэка
+                st.selectbox(
                     "📍 Позиция в отчете:",
                     options=list(range(1, len(st.session_state.photo_order) + 1)),
                     index=i,
-                    key=f"pos_{filename}"
+                    key=f"pos_{filename}",
+                    on_change=move_photo,            # Вызываем функцию при изменении
+                    args=(filename, i)               # Передаем функции имя файла и текущий индекс
                 )
-                
-                # Если пользователь выбрал новую цифру, меняем порядок и обновляем страницу
-                if new_pos - 1 != i:
-                    moved_file = st.session_state.photo_order.pop(i)
-                    st.session_state.photo_order.insert(new_pos - 1, moved_file)
-                    st.rerun()
-                # ------------------------------
 
             with c_controls:
                 selected_tags = st.multiselect("Шаблонные фразы:", CAPTION_OPTIONS, key=f"tags_{filename}")
