@@ -8,7 +8,7 @@ import io
 import os
 
 # Название файла шаблона
-TEMPLATE_NAME = "образец отчета1.docx"
+TEMPLATE_NAME = "образец отчета.docx"
 
 st.set_page_config(page_title="Генератор Отчетов - Гарант Оценка", layout="wide")
 
@@ -56,12 +56,11 @@ st.header("2. Описание повреждений и ремонта")
 damage_desc = st.text_area("Характеристика повреждений (при осмотре установлено):", height=100)
 repair_desc = st.text_area("Требуемый ремонт (для восстановления требуется):", height=100)
 
-def format_as_bullets(text):
+# Функция для сохранения переносов строк БЕЗ добавления маркеров (точек)
+def format_text_with_newlines(text):
     rt = RichText()
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     for i, line in enumerate(lines):
-        if not line.startswith(('-', '•', '*', '1.', '2.')):
-            line = f"• {line}"
         if i < len(lines) - 1:
             rt.add(line + '\n')
         else:
@@ -107,13 +106,12 @@ def move_photo(file_name, current_index):
         for idx, fname in enumerate(st.session_state.photo_order):
             st.session_state[f"pos_{fname}"] = idx + 1
 
-# --- НОВЫЙ КОЛБЭК ДЛЯ УДАЛЕНИЯ ---
+# --- КОЛБЭК ДЛЯ УДАЛЕНИЯ ---
 def delete_photo(filename):
     if filename in st.session_state.photo_order:
         st.session_state.photo_order.remove(filename)
-        st.session_state.deleted_files.add(filename) # Запоминаем, что файл исключен
+        st.session_state.deleted_files.add(filename)
         
-        # Пересчитываем позиции для оставшихся фото
         for idx, fname in enumerate(st.session_state.photo_order):
             st.session_state[f"pos_{fname}"] = idx + 1
 # ----------------------------------------
@@ -124,20 +122,16 @@ photo_data_list = []
 if uploaded_photos:
     current_filenames = [f.name for f in uploaded_photos]
     
-    # Синхронизация файлов при загрузке или удалении из окна Streamlit
     if set(current_filenames) != set(st.session_state.last_files):
         new_files = [f for f in current_filenames if f not in st.session_state.last_files]
         removed_files = [f for f in st.session_state.last_files if f not in current_filenames]
         
-        # Добавляем новые
         for f in new_files:
-            # Если файл был исключен, а теперь его закинули заново - восстанавливаем
             if f in st.session_state.deleted_files:
                 st.session_state.deleted_files.remove(f)
             if f not in st.session_state.photo_order and f not in st.session_state.deleted_files:
                 st.session_state.photo_order.append(f)
                 
-        # Убираем удаленные из верхнего окна
         for f in removed_files:
             if f in st.session_state.photo_order:
                 st.session_state.photo_order.remove(f)
@@ -146,7 +140,6 @@ if uploaded_photos:
                 
         st.session_state.last_files = current_filenames
         
-        # Безопасная инициализация позиций
         for idx, fname in enumerate(st.session_state.photo_order):
             key = f"pos_{fname}"
             if key not in st.session_state:
@@ -176,7 +169,6 @@ if uploaded_photos:
                     args=(filename, i)
                 )
                 
-                # Новая кнопка удаления
                 st.button("❌ Исключить фото", key=f"del_{filename}", on_click=delete_photo, args=(filename,))
 
             with c_controls:
@@ -249,8 +241,8 @@ if template_source is not None:
                 "STEERING": steering,
                 "TOTAL_SUM_NUM": sum_num,
                 "TOTAL_SUM_WORDS": sum_words,
-                "DAMAGE_DESC": format_as_bullets(damage_desc),
-                "REPAIR_DESC": format_as_bullets(repair_desc),
+                "DAMAGE_DESC": format_text_with_newlines(damage_desc), # Убрали функцию с маркерами
+                "REPAIR_DESC": format_text_with_newlines(repair_desc), # Убрали функцию с маркерами
                 "PHOTO_TABLE": subdoc 
             }
             
@@ -267,9 +259,13 @@ if template_source is not None:
             
             st.success("✅ Отчет успешно сгенерирован!")
             
-            file_name = f"Отчет_{customer if customer else 'Новый_клиент'}.docx"
+            # --- НОВАЯ ЛОГИКА СОХРАНЕНИЯ ФАЙЛА ---
+            # Сохраняем под госномером (если пустой — "Без_номера.docx")
+            safe_reg_num = reg_num.strip() if reg_num.strip() else "Без_номера"
+            file_name = f"{safe_reg_num}.docx"
+            
             st.download_button(
-                label="📥 СКАЧАТЬ ГОТОВЫЙ ОТЧЕТ",
+                label=f"📥 СКАЧАТЬ ОТЧЕТ ({file_name})",
                 data=buffer,
                 file_name=file_name,
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
