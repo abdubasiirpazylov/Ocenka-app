@@ -1,7 +1,7 @@
 import streamlit as st
 from docxtpl import DocxTemplate, RichText
 from docx.shared import Mm
-from docx.enum.text import WD_ALIGN_PARAGRAPH # Импорт для выравнивания по центру
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 import io
@@ -70,11 +70,26 @@ def format_as_bullets(text):
 
 st.header("3. Фотографии автомобиля")
 
+# Откорректированный и дополненный список для конструктора
 CAPTION_OPTIONS = [
+    # Ракурсы (добавил базу)
     "Вид спереди", "Вид сзади", "Вид слева", "Вид справа",
-    "Вид спереди, раскол.", "Вид слева, раскол, разрушение.",
-    "Вид слева, вмятина.", "Вид слева, разрыв.",
-    "Повреждение крупным планом", "VIN номер"
+    "VIN-код", "Показания одометра", "Обзорный снимок салона",
+    
+    # Вид дефекта (из списка + парочка частых)
+    "вмятина", "вытяжение", "гофра", "деформация", "изгиб", 
+    "повреждение ЛКП", "потертость", "разрушение", "разрыв", 
+    "раскол", "складка", "царапина", "скол", "перекос",
+    
+    # Характер деформации
+    "без образования видимых складок", "с глубокой вытяжкой металла", 
+    "с нарушением геометрии кромок", "с нарушением геометрии ребер жесткости", 
+    "с незначительной вытяжкой металла", "с образованием незначительных складок", 
+    "с образованием острых складок", "с образованием плавных складок", "с образованием трещин",
+    
+    # Площадь
+    "на площади менее 10%", "на площади от 10 до 20%", 
+    "на площади от 20 до 30%", "на площади от 30 до 40%", "на площади более 40%"
 ]
 
 uploaded_photos = st.file_uploader("Загрузите фотографии", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
@@ -83,27 +98,50 @@ photo_data_list = []
 if uploaded_photos:
     st.write("Настройте подписи для каждой фотографии:")
     cols = st.columns(2)
+    
     for index, photo in enumerate(uploaded_photos):
         col = cols[index % 2]
         with col:
             st.image(photo, use_container_width=True)
-            caption = st.selectbox(f"Подпись для фото {index+1}:", CAPTION_OPTIONS, key=f"caption_{index}")
-            photo_data_list.append({"file": photo, "caption": caption})
+            
+            # Мультивыбор: можно выбрать несколько вариантов (они соберутся через запятую)
+            selected_tags = st.multiselect(
+                f"Шаблонные фразы:", 
+                CAPTION_OPTIONS, 
+                key=f"tags_{index}"
+            )
+            
+            # Ручной ввод: можно дописать свои слова (например, "на передней правой двери")
+            custom_text = st.text_input(
+                f"Свой текст (дополнит или заменит шаблон):", 
+                key=f"custom_{index}"
+            )
+            
+            # Склеиваем выбранные шаблоны и ручной текст
+            final_caption_parts = []
+            if selected_tags:
+                final_caption_parts.append(", ".join(selected_tags))
+            if custom_text:
+                final_caption_parts.append(custom_text)
+                
+            final_caption = ", ".join(final_caption_parts)
+            
+            # Показываем живое превью итоговой подписи
+            if final_caption:
+                st.caption(f"📝 Итоговая подпись в отчете: **{final_caption}**")
+            
+            photo_data_list.append({"file": photo, "caption": final_caption})
 
 if template_source is not None:
     if st.button("СГЕНЕРИРОВАТЬ ОТЧЕТ", type="primary"):
         try:
             doc = DocxTemplate(template_source)
-            
-            # --- НОВАЯ СИСТЕМА: СТРОИМ ТАБЛИЦУ ПОЛНОСТЬЮ В PYTHON ---
-            subdoc = doc.new_subdoc() # Создаем вложенный документ
+            subdoc = doc.new_subdoc()
             
             if photo_data_list:
-                # Рисуем саму таблицу с границами
                 table = subdoc.add_table(rows=0, cols=2)
                 table.style = 'Table Grid'
                 
-                # Заполняем ячейки
                 for i in range(0, len(photo_data_list), 2):
                     cells = table.add_row().cells
                     
@@ -112,13 +150,13 @@ if template_source is not None:
                     img1_file.seek(0)
                     
                     p1 = cells[0].paragraphs[0]
-                    p1.alignment = WD_ALIGN_PARAGRAPH.CENTER # Ровняем по центру
+                    p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     run1 = p1.add_run()
-                    run1.add_picture(img1_file, width=Mm(80)) # Жесткий размер 80мм
-                    run1.add_break() # Перенос строки
-                    run1.add_text(photo_data_list[i]["caption"]) # Подпись
+                    run1.add_picture(img1_file, width=Mm(80))
+                    run1.add_break()
+                    run1.add_text(photo_data_list[i]["caption"])
                     
-                    # Правая ячейка (если есть вторая фотка)
+                    # Правая ячейка
                     p2 = cells[1].paragraphs[0]
                     p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     if i + 1 < len(photo_data_list):
@@ -149,12 +187,11 @@ if template_source is not None:
                 "TOTAL_SUM_WORDS": sum_words,
                 "DAMAGE_DESC": format_as_bullets(damage_desc),
                 "REPAIR_DESC": format_as_bullets(repair_desc),
-                "PHOTO_TABLE": subdoc # <--- Передаем готовую таблицу прямо на место тега!
+                "PHOTO_TABLE": subdoc 
             }
             
             doc.render(context)
             
-            # Обновление оглавления
             settings = doc.docx.settings.element
             update_fields = OxmlElement('w:updateFields')
             update_fields.set(qn('w:val'), 'true')
@@ -164,7 +201,7 @@ if template_source is not None:
             doc.save(buffer)
             buffer.seek(0)
             
-            st.success("✅ Отчет успешно сгенерирован! Ошибка с тегами полностью решена.")
+            st.success("✅ Отчет успешно сгенерирован!")
             
             file_name = f"Отчет_{customer if customer else 'Новый_клиент'}.docx"
             st.download_button(
