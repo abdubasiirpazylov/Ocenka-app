@@ -273,5 +273,20 @@ df_preview = get_google_sheets_preview()
 if df_preview is not None and not df_preview.empty:
     st.sidebar.dataframe(df_preview, use_container_width=True)
     st.sidebar.success("🟢 Синхронизация с облаком активна")
+    
+    # --- СОЗДАЕМ НАСТОЯЩИЙ EXCEL ДЛЯ СКАЧИВАНИЯ ---
+    excel_buffer = io.BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        df_preview.to_excel(writer, index=False, sheet_name='Реестр')
+    excel_buffer.seek(0)
+    
+    st.sidebar.download_button(
+        label="📥 Скачать ровный Excel (.xlsx)",
+        data=excel_buffer,
+        file_name=f"Отчет_шефу_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+    # ----------------------------------------------
 else:
     st.sidebar.info("Таблица пуста или еще не подключена в Secrets.")
