@@ -4,9 +4,10 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 import io
 import os
+from num2words import num2words # Новая библиотека для перевода чисел в текст
 
 # Название файла шаблона (главный образец)
-TEMPLATE_NAME = "образец отчета1.docx"
+TEMPLATE_NAME = "образец отчета.docx"
 
 st.set_page_config(page_title="Генератор Отчетов - Гарант Оценка", layout="wide")
 
@@ -31,8 +32,32 @@ with col1:
     date = st.text_input("Дата оценки:")
     customer = st.text_input("ФИО Заказчика:")
     address = st.text_input("Адрес регистрации:")
-    sum_num = st.text_input("Сумма цифрами:")
-    sum_words = st.text_input("Сумма прописью:")
+    
+    # --- АВТОМАТИЗАЦИЯ СУММЫ ПРОПИСЬЮ ---
+    sum_num = st.text_input("Сумма цифрами:", placeholder="Например: 247300")
+    
+    # Логика автоматического перевода числа в текст
+    generated_sum_words = ""
+    if sum_num:
+        try:
+            # Очищаем ввод от пробелов, если пользователь ввел "247 300"
+            clean_num_str = sum_num.replace(" ", "").replace(",", ".")
+            # Преобразуем в число (инт или флоат)
+            if "." in clean_num_str:
+                number_val = float(clean_num_str)
+                # Для дробных чисел берем целую часть для простоты или переводим как есть
+                integer_part = int(number_val)
+                generated_sum_words = num2words(integer_part, lang='ru').capitalize()
+            else:
+                number_val = int(clean_num_str)
+                generated_sum_words = num2words(number_val, lang='ru').capitalize()
+        except ValueError:
+            # Если пользователь ввел буквы вместо цифр, не ломаем приложение
+            generated_sum_words = ""
+
+    # Поле "Сумма прописью" автоматически получает вычисленное значение, но его можно править
+    sum_words = st.text_input("Сумма прописью:", value=generated_sum_words)
+    # -------------------------------------
 
 with col2:
     st.subheader("Данные автомобиля")
@@ -50,11 +75,7 @@ with col2:
     with col_inner2:
         steering = st.selectbox("Положение руля:", ["Левый руль", "Правый руль"])
 
-# =========================================================
-# БАЗА ШАБЛОНОВ ДЛЯ ОПИСАНИЯ
-# =========================================================
-
-# Обязательные приписки (Они будут стоять по умолчанию)
+# База шаблонов для описания
 DEFAULT_DAMAGE_SUFFIX = "Дефектный акт на транспортное средство на дату оценки не предоставлялся. Оценка технического состояния произведена без учёта скрытых дефектов."
 DEFAULT_REPAIR_SUFFIX = "После завершения ремонтно-восстановительных работ необходим контроль геометрии кузова, зазоров навесных элементов и качества ЛКП. Контроль выполняется организацией, осуществляющей ремонт."
 
@@ -85,20 +106,17 @@ REPAIR_TEMPLATES = {
     "[Стекла] Заднее стекло": "Замена стекла задка (вклейка) с подключением элементов обогрева."
 }
 
-# Инициализация текста по умолчанию в сессии
 if "damage_text" not in st.session_state:
     st.session_state.damage_text = DEFAULT_DAMAGE_SUFFIX
 
 if "repair_text" not in st.session_state:
     st.session_state.repair_text = f"Для восстановления требуется выполнить комплекс слесарно-кузовных, рихтовочных и малярно-окрасочных работ с применением расходных материалов, с последующей сборкой и регулировкой навесных элементов.\n{DEFAULT_REPAIR_SUFFIX}"
 
-# Функции для умного добавления фраз (чтобы они вставлялись перед припиской)
 def add_to_damage():
     selected = st.session_state.dmg_selector
     if selected and DAMAGE_TEMPLATES[selected]:
         current = st.session_state.damage_text
         new_phrase = DAMAGE_TEMPLATES[selected]
-        # Вставляем фразу ПЕРЕД дефолтной припиской
         if DEFAULT_DAMAGE_SUFFIX in current:
             st.session_state.damage_text = current.replace(DEFAULT_DAMAGE_SUFFIX, new_phrase + "\n" + DEFAULT_DAMAGE_SUFFIX)
         else:
@@ -109,19 +127,14 @@ def add_to_repair():
     if selected and REPAIR_TEMPLATES[selected]:
         current = st.session_state.repair_text
         new_phrase = REPAIR_TEMPLATES[selected]
-        # Вставляем фразу ПЕРЕД дефолтной припиской
         if DEFAULT_REPAIR_SUFFIX in current:
             st.session_state.repair_text = current.replace(DEFAULT_REPAIR_SUFFIX, new_phrase + "\n" + DEFAULT_REPAIR_SUFFIX)
         else:
             st.session_state.repair_text = current + "\n" + new_phrase if current else new_phrase
 
-# =========================================================
-
 st.header("2. Описание повреждений и ремонта")
 
-# Панель конструктора
 col_dmg, col_rep = st.columns(2)
-
 with col_dmg:
     st.selectbox("Конструктор осмотра:", list(DAMAGE_TEMPLATES.keys()), key="dmg_selector")
     st.button("➕ Добавить в осмотр", on_click=add_to_damage, use_container_width=True)
@@ -130,11 +143,9 @@ with col_rep:
     st.selectbox("Конструктор ремонта:", list(REPAIR_TEMPLATES.keys()), key="rep_selector")
     st.button("➕ Добавить в ремонт", on_click=add_to_repair, use_container_width=True)
 
-# Текстовые поля, привязанные к session_state (можно редактировать руками)
 damage_desc = st.text_area("Характеристика повреждений (при осмотре установлено):", key="damage_text", height=200)
 repair_desc = st.text_area("Требуемый ремонт (для восстановления требуется):", key="repair_text", height=200)
 
-# Функция для сохранения переносов строк в Word
 def format_text_with_newlines(text):
     rt = RichText()
     lines = [line.strip() for line in text.split('\n') if line.strip()]
