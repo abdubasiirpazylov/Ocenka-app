@@ -7,7 +7,7 @@ import os
 from num2words import num2words # Новая библиотека для перевода чисел в текст
 
 # Название файла шаблона (главный образец)
-TEMPLATE_NAME = "образец отчета.docx"
+TEMPLATE_NAME = "образец отчета1.docx"
 
 st.set_page_config(page_title="Генератор Отчетов - Гарант Оценка", layout="wide")
 
