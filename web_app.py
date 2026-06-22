@@ -10,7 +10,7 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 
-TEMPLATE_NAME = "образец отчета.docx"
+TEMPLATE_NAME = "образец отчета1.docx"
 
 st.set_page_config(page_title="Генератор Отчетов - Гарант Оценка", layout="wide")
 
