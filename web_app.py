@@ -61,11 +61,13 @@ with col1:
     st.subheader("Общие данные")
     report_num = st.text_input("Номер отчета:")
     contract_num = st.text_input("Номер договора:")
-    date_osmotra = st.text_input("Дата осмотра:")
     
-    # Дата отчета с автоматической подстановкой сегодняшнего дня
+    # --- ИСПРАВЛЕННЫЕ ДАТЫ ---
+    date_ocenki = st.text_input("Дата оценки:") # Это пойдет в Word-документ
+    
     today_str = datetime.now().strftime("%d.%m.%Y")
-    date_otcheta = st.text_input("Дата отчета:", value=today_str)
+    date_otcheta = st.text_input("Дата отчета (только для реестра):", value=today_str) # Это пойдет только в таблицу
+    # -------------------------
     
     customer = st.text_input("ФИО Заказчика:")
     address = st.text_input("Адрес регистрации:")
@@ -207,7 +209,7 @@ if template_source is not None:
             context = {
                 "REPORT_NUM": report_num,
                 "CONTRACT_NUM": contract_num,
-                "DATE": date_otcheta, # Передаем дату отчета в шаблон Word
+                "DATE": date_ocenki, # <--- В Word передается именно ДАТА ОЦЕНКИ
                 "CUSTOMER_NAME": customer,
                 "ADDRESS": address,
                 "CAR_MODEL": car_model,
@@ -238,7 +240,8 @@ if template_source is not None:
             buffer.seek(0)
             
             # --- ЗАПИСЬ СТРОКИ НАПРЯМУЮ В GOOGLE SHEETS ---
-            row_to_insert = [report_num, car_model, reg_num, date_osmotra, date_otcheta, service_cost]
+            # Здесь используются обе даты для отправки в таблицу шефу
+            row_to_insert = [report_num, car_model, reg_num, date_ocenki, date_otcheta, service_cost]
             
             success = append_to_google_sheets(row_to_insert)
             # ---------------------------------------------
