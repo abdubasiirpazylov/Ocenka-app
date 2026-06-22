@@ -4,15 +4,48 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 import io
 import os
-from num2words import num2words # Новая библиотека для перевода чисел в текст
+from num2words import num2words
+import pandas as pd
+from datetime import datetime
+import gspread
+from google.oauth2.service_account import Credentials
 
-# Название файла шаблона (главный образец)
 TEMPLATE_NAME = "образец отчета1.docx"
 
 st.set_page_config(page_title="Генератор Отчетов - Гарант Оценка", layout="wide")
 
 st.title("🚗 Главное рабочее место оценщика")
 st.markdown("Заполните данные и прикрепите готовый фотоотчет от эксперта.")
+
+# --- ФУНКЦИИ ДЛЯ РАБОТЫ С GOOGLE SHEETS ---
+def get_google_sheets_client():
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    # Подключаемся через секреты Streamlit Cloud
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+    return gspread.authorize(creds)
+
+def append_to_google_sheets(row_data):
+    try:
+        client = get_google_sheets_client()
+        sheet = client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
+        sheet.append_row(row_data)
+        return True
+    except Exception as e:
+        st.error(f"❌ Ошибка записи в Google Sheets: {e}")
+        return False
+
+def get_google_sheets_preview():
+    try:
+        client = get_google_sheets_client()
+        sheet = client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
+        records = sheet.get_all_records()
+        return pd.DataFrame(records)
+    except Exception:
+        return None
+# ------------------------------------------
 
 if os.path.exists(TEMPLATE_NAME):
     st.success(f"✅ Базовый шаблон отчета (`{TEMPLATE_NAME}`) успешно подключен автоматически.")
@@ -29,38 +62,30 @@ with col1:
     st.subheader("Общие данные")
     report_num = st.text_input("Номер отчета:")
     contract_num = st.text_input("Номер договора:")
-    date = st.text_input("Дата оценки:")
+    date = st.text_input("Дата осмотра:")
     customer = st.text_input("ФИО Заказчика:")
     address = st.text_input("Адрес регистрации:")
     
-    # --- АВТОМАТИЗАЦИЯ СУММЫ ПРОПИСЬЮ ---
-    sum_num = st.text_input("Сумма цифрами:", placeholder="Например: 247300")
+    sum_num = st.text_input("Сумма ущерба цифрами:", placeholder="Например: 247300")
     
-    # Логика автоматического перевода числа в текст
     generated_sum_words = ""
     if sum_num:
         try:
-            # Очищаем ввод от пробелов, если пользователь ввел "247 300"
             clean_num_str = sum_num.replace(" ", "").replace(",", ".")
-            # Преобразуем в число (инт или флоат)
             if "." in clean_num_str:
                 number_val = float(clean_num_str)
-                # Для дробных чисел берем целую часть для простоты или переводим как есть
                 integer_part = int(number_val)
                 generated_sum_words = num2words(integer_part, lang='ru').capitalize()
             else:
                 number_val = int(clean_num_str)
                 generated_sum_words = num2words(number_val, lang='ru').capitalize()
         except ValueError:
-            # Если пользователь ввел буквы вместо цифр, не ломаем приложение
             generated_sum_words = ""
 
-    # Поле "Сумма прописью" автоматически получает вычисленное значение, но его можно править
-    sum_words = st.text_input("Сумма прописью:", value=generated_sum_words)
-    # -------------------------------------
+    sum_words = st.text_input("Сумма ущерба прописью:", value=generated_sum_words)
 
 with col2:
-    st.subheader("Данные автомобиля")
+    st.subheader("Данные автомобиля и услуги")
     car_model = st.text_input("Марка, модель:")
     reg_num = st.text_input("Гос. номер:")
     vin = st.text_input("VIN код:")
@@ -74,8 +99,11 @@ with col2:
         body_type = st.text_input("Тип кузова:")
     with col_inner2:
         steering = st.selectbox("Положение руля:", ["Левый руль", "Правый руль"])
+        
+    st.divider()
+    service_cost = st.text_input("💰 Стоимость услуги (заработок, для отчета шефу):", placeholder="Например: 5000")
 
-# База шаблонов для описания
+# База шаблонов
 DEFAULT_DAMAGE_SUFFIX = "Дефектный акт на транспортное средство на дату оценки не предоставлялся. Оценка технического состояния произведена без учёта скрытых дефектов."
 DEFAULT_REPAIR_SUFFIX = "После завершения ремонтно-восстановительных работ необходим контроль геометрии кузова, зазоров навесных элементов и качества ЛКП. Контроль выполняется организацией, осуществляющей ремонт."
 
@@ -203,7 +231,17 @@ if template_source is not None:
             doc.save(buffer)
             buffer.seek(0)
             
-            st.success("✅ Итоговый отчет успешно сгенерирован!")
+            # --- ЗАПИСЬ СТРОКИ НАПРЯМУЮ В GOOGLE SHEETS ---
+            report_date_str = datetime.now().strftime("%d.%m.%Y")
+            row_to_insert = [report_num, car_model, reg_num, date, report_date_str, service_cost]
+            
+            success = append_to_google_sheets(row_to_insert)
+            # ---------------------------------------------
+
+            if success:
+                st.success("✅ Отчет создан! Данные мгновенно улетели в Google Sheets.")
+            else:
+                st.warning("⚠️ Отчет Word создан, но не удалось записать строку в Google Sheets. Проверьте логи.")
             
             safe_reg_num = reg_num.strip() if reg_num.strip() else "Без_номера"
             file_name = f"{safe_reg_num}.docx"
@@ -218,3 +256,14 @@ if template_source is not None:
             
         except Exception as e:
             st.error(f"Произошла ошибка при обработке файла: {e}")
+
+# --- БОКОВАЯ ПАНЕЛЬ С ЖИВЫМ ПРЕДПРОСМОТРОМ ИЗ GOOGLE SHEETS ---
+st.sidebar.title("📊 Живой отчет для шефа")
+st.sidebar.markdown("Данные подгружаются напрямую из облака Google Sheets.")
+
+df_preview = get_google_sheets_preview()
+if df_preview is not None and not df_preview.empty:
+    st.sidebar.dataframe(df_preview, use_container_width=True)
+    st.sidebar.success("🟢 Синхронизация с облаком активна")
+else:
+    st.sidebar.info("Таблица пуста или еще не подключена в Secrets.")
