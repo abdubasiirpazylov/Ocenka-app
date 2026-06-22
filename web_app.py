@@ -10,7 +10,7 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 
-TEMPLATE_NAME = "образец отчета1.docx"
+TEMPLATE_NAME = "образец отчета.docx"
 
 st.set_page_config(page_title="Генератор Отчетов - Гарант Оценка", layout="wide")
 
@@ -23,7 +23,6 @@ def get_google_sheets_client():
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
-    # Подключаемся через секреты Streamlit Cloud
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     return gspread.authorize(creds)
 
@@ -62,7 +61,12 @@ with col1:
     st.subheader("Общие данные")
     report_num = st.text_input("Номер отчета:")
     contract_num = st.text_input("Номер договора:")
-    date = st.text_input("Дата осмотра:")
+    date_osmotra = st.text_input("Дата осмотра:")
+    
+    # Дата отчета с автоматической подстановкой сегодняшнего дня
+    today_str = datetime.now().strftime("%d.%m.%Y")
+    date_otcheta = st.text_input("Дата отчета:", value=today_str)
+    
     customer = st.text_input("ФИО Заказчика:")
     address = st.text_input("Адрес регистрации:")
     
@@ -103,7 +107,9 @@ with col2:
     st.divider()
     service_cost = st.text_input("💰 Стоимость услуги (заработок, для отчета шефу):", placeholder="Например: 5000")
 
-# База шаблонов
+# =========================================================
+# БАЗА ШАБЛОНОВ ДЛЯ ОПИСАНИЯ
+# =========================================================
 DEFAULT_DAMAGE_SUFFIX = "Дефектный акт на транспортное средство на дату оценки не предоставлялся. Оценка технического состояния произведена без учёта скрытых дефектов."
 DEFAULT_REPAIR_SUFFIX = "После завершения ремонтно-восстановительных работ необходим контроль геометрии кузова, зазоров навесных элементов и качества ЛКП. Контроль выполняется организацией, осуществляющей ремонт."
 
@@ -201,7 +207,7 @@ if template_source is not None:
             context = {
                 "REPORT_NUM": report_num,
                 "CONTRACT_NUM": contract_num,
-                "DATE": date,
+                "DATE": date_otcheta, # Передаем дату отчета в шаблон Word
                 "CUSTOMER_NAME": customer,
                 "ADDRESS": address,
                 "CAR_MODEL": car_model,
@@ -232,8 +238,7 @@ if template_source is not None:
             buffer.seek(0)
             
             # --- ЗАПИСЬ СТРОКИ НАПРЯМУЮ В GOOGLE SHEETS ---
-            report_date_str = datetime.now().strftime("%d.%m.%Y")
-            row_to_insert = [report_num, car_model, reg_num, date, report_date_str, service_cost]
+            row_to_insert = [report_num, car_model, reg_num, date_osmotra, date_otcheta, service_cost]
             
             success = append_to_google_sheets(row_to_insert)
             # ---------------------------------------------
