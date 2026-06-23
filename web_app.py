@@ -10,7 +10,7 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 
-TEMPLATE_NAME = "образец отчета1.docx"
+TEMPLATE_NAME = "образец отчета.docx"
 
 st.set_page_config(page_title="Генератор Отчетов - Гарант Оценка", layout="wide")
 
@@ -114,6 +114,8 @@ with col_hdr2:
     st.write("") 
     st.button("🧹 Очистить форму", on_click=clear_fields, use_container_width=True, type="secondary")
 
+# Загружаем обе таблицы
+df_preview = get_cached_preview()
 df_db = get_cached_db()
 
 col1, col2 = st.columns(2)
@@ -171,43 +173,62 @@ with col2:
     st.divider()
     service_cost = st.text_input("💰 Стоимость услуги (заработок, для отчета шефу):", placeholder="Например: 5000", key="service_cost")
 
-# --- БРОНЕБОЙНАЯ СИСТЕМА ПРОВЕРКИ ---
+# --- БРОНЕБОЙНАЯ СИСТЕМА ПРОВЕРКИ ПО ОБЕИМ ТАБЛИЦАМ ---
 has_duplicates = False 
 warnings_list = []
 
+existing_reports = set()
+existing_regs = set()
+existing_vins = set()
+existing_passports = set()
+
+# 1. Считываем данные с первого листа (Отчет шефу)
+if df_preview is not None and not df_preview.empty:
+    actual_cols_1 = {str(col).strip().lower(): col for col in df_preview.columns}
+    col_rep1 = actual_cols_1.get("номер отчета")
+    col_reg1 = actual_cols_1.get("госномер", actual_cols_1.get("гос. номер"))
+    
+    if col_rep1: 
+        existing_reports.update([str(x).strip().lower() for x in df_preview[col_rep1].dropna() if str(x).strip()])
+    if col_reg1: 
+        existing_regs.update([str(x).strip().lower() for x in df_preview[col_reg1].dropna() if str(x).strip()])
+
+# 2. Считываем данные со второго листа (База проверок)
 if df_db is not None and not df_db.empty:
-    # Нормализуем названия колонок (убираем случайные пробелы и делаем нижний регистр)
-    actual_columns = {str(col).strip().lower(): col for col in df_db.columns}
+    actual_cols_2 = {str(col).strip().lower(): col for col in df_db.columns}
+    col_rep2 = actual_cols_2.get("номер отчета")
+    col_reg2 = actual_cols_2.get("госномер", actual_cols_2.get("гос. номер"))
+    col_vin2 = actual_cols_2.get("vin код", actual_cols_2.get("vin-код", actual_cols_2.get("vin")))
+    col_pass2 = actual_cols_2.get("техпаспорт", actual_cols_2.get("тех. паспорт", actual_cols_2.get("тех паспорт")))
     
-    col_report = actual_columns.get("номер отчета")
-    col_reg = actual_columns.get("госномер", actual_columns.get("гос. номер"))
-    col_vin = actual_columns.get("vin код", actual_columns.get("vin-код", actual_columns.get("vin")))
-    col_pass = actual_columns.get("техпаспорт", actual_columns.get("тех. паспорт", actual_columns.get("тех паспорт")))
+    if col_rep2: 
+        existing_reports.update([str(x).strip().lower() for x in df_db[col_rep2].dropna() if str(x).strip()])
+    if col_reg2: 
+        existing_regs.update([str(x).strip().lower() for x in df_db[col_reg2].dropna() if str(x).strip()])
+    if col_vin2: 
+        existing_vins.update([str(x).strip().lower() for x in df_db[col_vin2].dropna() if str(x).strip()])
+    if col_pass2: 
+        existing_passports.update([str(x).strip().lower() for x in df_db[col_pass2].dropna() if str(x).strip()])
+
+# 3. Проверяем введенные данные
+current_report = report_num.strip().lower() if report_num else ""
+current_reg = reg_num.strip().lower() if reg_num else ""
+current_vin = vin.strip().lower() if vin else ""
+current_passport = tech_passport.strip().lower() if tech_passport else ""
+
+if current_report and current_report in existing_reports:
+    warnings_list.append(f"Отчет № **{report_num}**")
+if current_reg and current_reg in existing_regs:
+    warnings_list.append(f"Госномер **{reg_num}**")
+if current_vin and current_vin in existing_vins:
+    warnings_list.append(f"VIN-код **{vin}**")
+if current_passport and current_passport in existing_passports:
+    warnings_list.append(f"Тех. паспорт **{tech_passport}**")
     
-    # Собираем существующие данные
-    existing_reports = [str(x).strip().lower() for x in df_db[col_report].dropna()] if col_report else []
-    existing_regs = [str(x).strip().lower() for x in df_db[col_reg].dropna()] if col_reg else []
-    existing_vins = [str(x).strip().lower() for x in df_db[col_vin].dropna()] if col_vin else []
-    existing_passports = [str(x).strip().lower() for x in df_db[col_pass].dropna()] if col_pass else []
-    
-    current_report = report_num.strip().lower() if report_num else ""
-    current_reg = reg_num.strip().lower() if reg_num else ""
-    current_vin = vin.strip().lower() if vin else ""
-    current_passport = tech_passport.strip().lower() if tech_passport else ""
-    
-    if current_report and current_report in existing_reports:
-        warnings_list.append(f"Отчет № **{report_num}**")
-    if current_reg and current_reg in existing_regs:
-        warnings_list.append(f"Госномер **{reg_num}**")
-    if current_vin and current_vin in existing_vins:
-        warnings_list.append(f"VIN-код **{vin}**")
-    if current_passport and current_passport in existing_passports:
-        warnings_list.append(f"Тех. паспорт **{tech_passport}**")
-        
-    if warnings_list:
-        has_duplicates = True
-        st.error(f"⛔ **ГЕНЕРАЦИЯ ЗАБЛОКИРОВАНА!**\n\nДанные: {', '.join(warnings_list)} уже числятся во внутренней базе!\n\nОбязательно нажмите серую кнопку **«🧹 Очистить форму»** в самом верху.")
-# -----------------------------------
+if warnings_list:
+    has_duplicates = True
+    st.error(f"⛔ **ГЕНЕРАЦИЯ ЗАБЛОКИРОВАНА!**\n\nДанные: {', '.join(warnings_list)} уже числятся в базе (найдено совпадение в Google Sheets)!\n\nОбязательно нажмите серую кнопку **«🧹 Очистить форму»** в самом верху.")
+# --------------------------------------------------
 
 st.header("2. Описание повреждений и ремонта")
 
@@ -291,11 +312,9 @@ st.info("💡 Загрузите сюда файл .docx, который был 
 photo_report_doc = st.file_uploader("Загрузите готовый Фотоотчет (.docx)", type="docx")
 
 if template_source is not None:
-    # Кнопка визуально блокируется
     button_clicked = st.button("СГЕНЕРИРОВАТЬ ИТОГОВЫЙ ОТЧЕТ", type="primary", use_container_width=True, disabled=has_duplicates)
     
     if button_clicked:
-        # ЖЕСТКАЯ ОСТАНОВКА: Если блокировка активна, прерываем выполнение кода на 100%
         if has_duplicates:
             st.error("❌ Системная блокировка! Очистите форму перед генерацией.")
             st.stop()
