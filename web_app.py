@@ -28,15 +28,12 @@ def append_to_google_sheets(boss_row, db_row):
         client = get_google_sheets_client()
         doc = client.open_by_key(st.secrets["spreadsheet_id"])
         
-        # 1. Запись в отчет шефу (Самый первый лист, индекс 0)
         sheet_boss = doc.get_worksheet(0)
         sheet_boss.append_row(boss_row)
         
-        # 2. Запись в скрытую базу для проверок
         try:
             sheet_db = doc.worksheet("База_проверок")
         except gspread.exceptions.WorksheetNotFound:
-            # Если вкладки еще нет, создаем её автоматически!
             sheet_db = doc.add_worksheet(title="База_проверок", rows="1000", cols="10")
             sheet_db.append_row(["Номер отчета", "Госномер", "VIN код", "Техпаспорт", "Дата отчета"])
             
@@ -62,10 +59,8 @@ def get_google_sheets_database():
         records = sheet_db.get_all_records()
         return pd.DataFrame(records)
     except Exception:
-        # Если вкладки еще нет, возвращаем пустоту
         return pd.DataFrame()
 
-# Кэшируем базы данных, чтобы сайт летал без задержек
 @st.cache_data(ttl=60)
 def get_cached_preview():
     return get_google_sheets_preview()
@@ -112,7 +107,6 @@ else:
     st.warning(f"⚠️ Файл `{TEMPLATE_NAME}` не найден. Загрузите его вручную ниже:")
     template_source = st.file_uploader("Загрузите шаблон отчета", type="docx")
 
-# Шапка с кнопкой очистки
 col_hdr1, col_hdr2 = st.columns([4, 1])
 with col_hdr1:
     st.header("1. Ввод данных")
@@ -120,7 +114,6 @@ with col_hdr2:
     st.write("") 
     st.button("🧹 Очистить форму", on_click=clear_fields, use_container_width=True, type="secondary")
 
-# ЗАГРУЖАЕМ СПЕЦИАЛЬНУЮ БАЗУ ДЛЯ ПРОВЕРОК
 df_db = get_cached_db()
 
 col1, col2 = st.columns(2)
@@ -178,21 +171,30 @@ with col2:
     st.divider()
     service_cost = st.text_input("💰 Стоимость услуги (заработок, для отчета шефу):", placeholder="Например: 5000", key="service_cost")
 
-# --- СИСТЕМА ПРОВЕРКИ ПО ОТДЕЛЬНОЙ ТАБЛИЦЕ ---
+# --- БРОНЕБОЙНАЯ СИСТЕМА ПРОВЕРКИ ---
 has_duplicates = False 
+warnings_list = []
 
 if df_db is not None and not df_db.empty:
-    existing_reports = [str(x).strip().lower() for x in df_db.get("Номер отчета", []) if str(x).strip()]
-    existing_regs = [str(x).strip().lower() for x in df_db.get("Госномер", []) if str(x).strip()]
-    existing_vins = [str(x).strip().lower() for x in df_db.get("VIN код", []) if str(x).strip()]
-    existing_passports = [str(x).strip().lower() for x in df_db.get("Техпаспорт", []) if str(x).strip()]
+    # Нормализуем названия колонок (убираем случайные пробелы и делаем нижний регистр)
+    actual_columns = {str(col).strip().lower(): col for col in df_db.columns}
+    
+    col_report = actual_columns.get("номер отчета")
+    col_reg = actual_columns.get("госномер", actual_columns.get("гос. номер"))
+    col_vin = actual_columns.get("vin код", actual_columns.get("vin-код", actual_columns.get("vin")))
+    col_pass = actual_columns.get("техпаспорт", actual_columns.get("тех. паспорт", actual_columns.get("тех паспорт")))
+    
+    # Собираем существующие данные
+    existing_reports = [str(x).strip().lower() for x in df_db[col_report].dropna()] if col_report else []
+    existing_regs = [str(x).strip().lower() for x in df_db[col_reg].dropna()] if col_reg else []
+    existing_vins = [str(x).strip().lower() for x in df_db[col_vin].dropna()] if col_vin else []
+    existing_passports = [str(x).strip().lower() for x in df_db[col_pass].dropna()] if col_pass else []
     
     current_report = report_num.strip().lower() if report_num else ""
     current_reg = reg_num.strip().lower() if reg_num else ""
     current_vin = vin.strip().lower() if vin else ""
     current_passport = tech_passport.strip().lower() if tech_passport else ""
     
-    warnings_list = []
     if current_report and current_report in existing_reports:
         warnings_list.append(f"Отчет № **{report_num}**")
     if current_reg and current_reg in existing_regs:
@@ -204,7 +206,7 @@ if df_db is not None and not df_db.empty:
         
     if warnings_list:
         has_duplicates = True
-        st.error(f"⛔ **ГЕНЕРАЦИЯ ЗАБЛОКИРОВАНА!**\n\nДанные: {', '.join(warnings_list)} уже числятся во внутренней базе (Лист 'База_проверок')!\n\nЕсли вы оформляете нового клиента, нажмите серую кнопку **«🧹 Очистить форму»** в самом верху.")
+        st.error(f"⛔ **ГЕНЕРАЦИЯ ЗАБЛОКИРОВАНА!**\n\nДанные: {', '.join(warnings_list)} уже числятся во внутренней базе!\n\nОбязательно нажмите серую кнопку **«🧹 Очистить форму»** в самом верху.")
 # -----------------------------------
 
 st.header("2. Описание повреждений и ремонта")
@@ -289,8 +291,15 @@ st.info("💡 Загрузите сюда файл .docx, который был 
 photo_report_doc = st.file_uploader("Загрузите готовый Фотоотчет (.docx)", type="docx")
 
 if template_source is not None:
-    # --- КНОПКА ОТКЛЮЧАЕТСЯ, ЕСЛИ ЕСТЬ ДУБЛИКАТ ---
-    if st.button("СГЕНЕРИРОВАТЬ ИТОГОВЫЙ ОТЧЕТ", type="primary", use_container_width=True, disabled=has_duplicates):
+    # Кнопка визуально блокируется
+    button_clicked = st.button("СГЕНЕРИРОВАТЬ ИТОГОВЫЙ ОТЧЕТ", type="primary", use_container_width=True, disabled=has_duplicates)
+    
+    if button_clicked:
+        # ЖЕСТКАЯ ОСТАНОВКА: Если блокировка активна, прерываем выполнение кода на 100%
+        if has_duplicates:
+            st.error("❌ Системная блокировка! Очистите форму перед генерацией.")
+            st.stop()
+            
         try:
             doc = DocxTemplate(template_source)
             
@@ -332,15 +341,10 @@ if template_source is not None:
             doc.save(buffer)
             buffer.seek(0)
             
-            # --- РАСПРЕДЕЛЕНИЕ ДАННЫХ ПО 2 ТАБЛИЦАМ ---
-            # 1. Формируем красивую строку для шефа (без VIN и техпаспорта)
             row_boss = [report_num, car_model, reg_num, date_ocenki, date_otcheta, service_cost]
-            
-            # 2. Формируем подробную строку для скрытой базы проверок
             row_db = [report_num, reg_num, vin, tech_passport, date_otcheta]
             
             success = append_to_google_sheets(row_boss, row_db)
-            # ---------------------------------------------
             
             if success:
                 get_cached_preview.clear() 
