@@ -23,11 +23,24 @@ def get_google_sheets_client():
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     return gspread.authorize(creds)
 
-def append_to_google_sheets(row_data):
+def append_to_google_sheets(boss_row, db_row):
     try:
         client = get_google_sheets_client()
-        sheet = client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
-        sheet.append_row(row_data)
+        doc = client.open_by_key(st.secrets["spreadsheet_id"])
+        
+        # 1. Запись в отчет шефу (Самый первый лист, индекс 0)
+        sheet_boss = doc.get_worksheet(0)
+        sheet_boss.append_row(boss_row)
+        
+        # 2. Запись в скрытую базу для проверок
+        try:
+            sheet_db = doc.worksheet("База_проверок")
+        except gspread.exceptions.WorksheetNotFound:
+            # Если вкладки еще нет, создаем её автоматически!
+            sheet_db = doc.add_worksheet(title="База_проверок", rows="1000", cols="10")
+            sheet_db.append_row(["Номер отчета", "Госномер", "VIN код", "Техпаспорт", "Дата отчета"])
+            
+        sheet_db.append_row(db_row)
         return True
     except Exception as e:
         st.error(f"❌ Ошибка записи в Google Sheets: {e}")
@@ -36,16 +49,30 @@ def append_to_google_sheets(row_data):
 def get_google_sheets_preview():
     try:
         client = get_google_sheets_client()
-        sheet = client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
+        sheet = client.open_by_key(st.secrets["spreadsheet_id"]).get_worksheet(0)
         records = sheet.get_all_records()
         return pd.DataFrame(records)
     except Exception:
         return None
 
-# Кэшируем базу данных на 60 секунд, чтобы сайт не тормозил при вводе текста
+def get_google_sheets_database():
+    try:
+        client = get_google_sheets_client()
+        sheet_db = client.open_by_key(st.secrets["spreadsheet_id"]).worksheet("База_проверок")
+        records = sheet_db.get_all_records()
+        return pd.DataFrame(records)
+    except Exception:
+        # Если вкладки еще нет, возвращаем пустоту
+        return pd.DataFrame()
+
+# Кэшируем базы данных, чтобы сайт летал без задержек
 @st.cache_data(ttl=60)
 def get_cached_preview():
     return get_google_sheets_preview()
+
+@st.cache_data(ttl=60)
+def get_cached_db():
+    return get_google_sheets_database()
 
 # --- ФУНКЦИЯ ОЧИСТКИ ФОРМЫ ---
 DEFAULT_DAMAGE_SUFFIX = "Дефектный акт на транспортное средство на дату оценки не предоставлялся. Оценка технического состояния произведена без учёта скрытых дефектов."
@@ -65,11 +92,9 @@ def clear_fields():
     if "steering" in st.session_state:
         st.session_state["steering"] = "Левый руль"
     
-    # Дата отчета возвращается на "сегодня"
     if "date_otcheta" in st.session_state:
         st.session_state["date_otcheta"] = datetime.now().strftime("%d.%m.%Y")
         
-    # Сброс текстовых блоков
     st.session_state.damage_text = DEFAULT_DAMAGE_SUFFIX
     st.session_state.repair_text = f"Для восстановления требуется выполнить комплекс слесарно-кузовных, рихтовочных и малярно-окрасочных работ с применением расходных материалов, с последующей сборкой и регулировкой навесных элементов.\n{DEFAULT_REPAIR_SUFFIX}"
 
@@ -92,11 +117,11 @@ col_hdr1, col_hdr2 = st.columns([4, 1])
 with col_hdr1:
     st.header("1. Ввод данных")
 with col_hdr2:
-    st.write("") # Отступ
+    st.write("") 
     st.button("🧹 Очистить форму", on_click=clear_fields, use_container_width=True, type="secondary")
 
-# Загружаем базу данных для проверки
-df_preview = get_cached_preview()
+# ЗАГРУЖАЕМ СПЕЦИАЛЬНУЮ БАЗУ ДЛЯ ПРОВЕРОК
+df_db = get_cached_db()
 
 col1, col2 = st.columns(2)
 
@@ -107,7 +132,6 @@ with col1:
     
     date_ocenki = st.text_input("Дата оценки:", key="date_ocenki") 
     
-    # Инициализация даты в session_state, если её там нет
     today_str = datetime.now().strftime("%d.%m.%Y")
     if "date_otcheta" not in st.session_state:
         st.session_state.date_otcheta = today_str
@@ -133,7 +157,6 @@ with col1:
         except ValueError:
             generated_sum_words = ""
 
-    # Привязываем перевод к значению, а не ключу, чтобы он менялся динамически
     sum_words = st.text_input("Сумма ущерба прописью:", value=generated_sum_words)
 
 with col2:
@@ -155,22 +178,33 @@ with col2:
     st.divider()
     service_cost = st.text_input("💰 Стоимость услуги (заработок, для отчета шефу):", placeholder="Например: 5000", key="service_cost")
 
-# --- СИСТЕМА ПРОВЕРКИ ДУБЛИКАТОВ ---
-if df_preview is not None and not df_preview.empty:
-    existing_reports = [str(x).strip().lower() for x in df_preview.get("Номер отчета", [])]
-    existing_regs = [str(x).strip().lower() for x in df_preview.get("Госномер", [])]
+# --- СИСТЕМА ПРОВЕРКИ ПО ОТДЕЛЬНОЙ ТАБЛИЦЕ ---
+has_duplicates = False 
+
+if df_db is not None and not df_db.empty:
+    existing_reports = [str(x).strip().lower() for x in df_db.get("Номер отчета", []) if str(x).strip()]
+    existing_regs = [str(x).strip().lower() for x in df_db.get("Госномер", []) if str(x).strip()]
+    existing_vins = [str(x).strip().lower() for x in df_db.get("VIN код", []) if str(x).strip()]
+    existing_passports = [str(x).strip().lower() for x in df_db.get("Техпаспорт", []) if str(x).strip()]
     
     current_report = report_num.strip().lower() if report_num else ""
     current_reg = reg_num.strip().lower() if reg_num else ""
+    current_vin = vin.strip().lower() if vin else ""
+    current_passport = tech_passport.strip().lower() if tech_passport else ""
     
     warnings_list = []
     if current_report and current_report in existing_reports:
-        warnings_list.append(f"Отчет с номером **{report_num}**")
+        warnings_list.append(f"Отчет № **{report_num}**")
     if current_reg and current_reg in existing_regs:
-        warnings_list.append(f"Машина с госномером **{reg_num}**")
+        warnings_list.append(f"Госномер **{reg_num}**")
+    if current_vin and current_vin in existing_vins:
+        warnings_list.append(f"VIN-код **{vin}**")
+    if current_passport and current_passport in existing_passports:
+        warnings_list.append(f"Тех. паспорт **{tech_passport}**")
         
     if warnings_list:
-        st.error(f"⚠️ **ВНИМАНИЕ! ВОЗМОЖНАЯ ОШИБКА!**\n\n{' и '.join(warnings_list)} уже числятся в базе Google Sheets!\n\nЕсли вы начали оформлять нового клиента, скорее всего, вы **забыли очистить форму** и данные перемешались. Нажмите серую кнопку **«🧹 Очистить форму»** в самом верху.")
+        has_duplicates = True
+        st.error(f"⛔ **ГЕНЕРАЦИЯ ЗАБЛОКИРОВАНА!**\n\nДанные: {', '.join(warnings_list)} уже числятся во внутренней базе (Лист 'База_проверок')!\n\nЕсли вы оформляете нового клиента, нажмите серую кнопку **«🧹 Очистить форму»** в самом верху.")
 # -----------------------------------
 
 st.header("2. Описание повреждений и ремонта")
@@ -255,7 +289,8 @@ st.info("💡 Загрузите сюда файл .docx, который был 
 photo_report_doc = st.file_uploader("Загрузите готовый Фотоотчет (.docx)", type="docx")
 
 if template_source is not None:
-    if st.button("СГЕНЕРИРОВАТЬ ИТОГОВЫЙ ОТЧЕТ", type="primary", use_container_width=True):
+    # --- КНОПКА ОТКЛЮЧАЕТСЯ, ЕСЛИ ЕСТЬ ДУБЛИКАТ ---
+    if st.button("СГЕНЕРИРОВАТЬ ИТОГОВЫЙ ОТЧЕТ", type="primary", use_container_width=True, disabled=has_duplicates):
         try:
             doc = DocxTemplate(template_source)
             
@@ -297,15 +332,22 @@ if template_source is not None:
             doc.save(buffer)
             buffer.seek(0)
             
-            # --- ЗАПИСЬ СТРОКИ НАПРЯМУЮ В GOOGLE SHEETS ---
-            row_to_insert = [report_num, car_model, reg_num, date_ocenki, date_otcheta, service_cost]
-            success = append_to_google_sheets(row_to_insert)
+            # --- РАСПРЕДЕЛЕНИЕ ДАННЫХ ПО 2 ТАБЛИЦАМ ---
+            # 1. Формируем красивую строку для шефа (без VIN и техпаспорта)
+            row_boss = [report_num, car_model, reg_num, date_ocenki, date_otcheta, service_cost]
+            
+            # 2. Формируем подробную строку для скрытой базы проверок
+            row_db = [report_num, reg_num, vin, tech_passport, date_otcheta]
+            
+            success = append_to_google_sheets(row_boss, row_db)
+            # ---------------------------------------------
             
             if success:
-                get_cached_preview.clear() # Сбрасываем кэш, чтобы таблица слева сразу обновилась!
+                get_cached_preview.clear() 
+                get_cached_db.clear() 
                 st.success("✅ Отчет создан! Данные мгновенно улетели в Google Sheets.")
             else:
-                st.warning("⚠️ Отчет Word создан, но не удалось записать строку в Google Sheets. Проверьте логи.")
+                st.warning("⚠️ Отчет Word создан, но не удалось записать данные в Google Sheets. Проверьте логи.")
             
             safe_reg_num = reg_num.strip() if reg_num.strip() else "Без_номера"
             file_name = f"{safe_reg_num}.docx"
@@ -321,11 +363,10 @@ if template_source is not None:
         except Exception as e:
             st.error(f"Произошла ошибка при обработке файла: {e}")
 
-# --- БОКОВАЯ ПАНЕЛЬ С ЖИВЫМ ПРЕДПРОСМОТРОМ ИЗ GOOGLE SHEETS ---
 st.sidebar.title("📊 Живой отчет для шефа")
-st.sidebar.markdown("Данные подгружаются напрямую из облака Google Sheets.")
+st.sidebar.markdown("Данные подгружаются напрямую из облака Google Sheets (только основные данные).")
 
-df_preview = get_cached_preview() # Используем быструю кэшированную версию
+df_preview = get_cached_preview()
 if df_preview is not None and not df_preview.empty:
     st.sidebar.dataframe(df_preview, use_container_width=True)
     st.sidebar.success("🟢 Синхронизация с облаком активна")
