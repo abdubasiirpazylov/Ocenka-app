@@ -10,14 +10,11 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 
-TEMPLATE_NAME = "образец отчета1.docx"
+TEMPLATE_NAME = "образец отчета.docx"
 
 st.set_page_config(page_title="Генератор Отчетов - Гарант Оценка", layout="wide")
 
-st.title("🚗 Главное рабочее место оценщика")
-st.markdown("Заполните данные и прикрепите готовый фотоотчет от эксперта.")
-
-# --- ФУНКЦИИ ДЛЯ РАБОТЫ С GOOGLE SHEETS ---
+# --- ФУНКЦИИ ДЛЯ РАБОТЫ С GOOGLE SHEETS И КЭШЕМ ---
 def get_google_sheets_client():
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -44,7 +41,44 @@ def get_google_sheets_preview():
         return pd.DataFrame(records)
     except Exception:
         return None
-# ------------------------------------------
+
+# Кэшируем базу данных на 60 секунд, чтобы сайт не тормозил при вводе текста
+@st.cache_data(ttl=60)
+def get_cached_preview():
+    return get_google_sheets_preview()
+
+# --- ФУНКЦИЯ ОЧИСТКИ ФОРМЫ ---
+DEFAULT_DAMAGE_SUFFIX = "Дефектный акт на транспортное средство на дату оценки не предоставлялся. Оценка технического состояния произведена без учёта скрытых дефектов."
+DEFAULT_REPAIR_SUFFIX = "После завершения ремонтно-восстановительных работ необходим контроль геометрии кузова, зазоров навесных элементов и качества ЛКП. Контроль выполняется организацией, осуществляющей ремонт."
+
+def clear_fields():
+    fields_to_clear = [
+        "report_num", "contract_num", "date_ocenki", "customer",
+        "address", "sum_num", "car_model", "reg_num", "vin",
+        "tech_passport", "year", "engine_vol", "color", "body_type",
+        "service_cost"
+    ]
+    for f in fields_to_clear:
+        if f in st.session_state:
+            st.session_state[f] = ""
+    
+    if "steering" in st.session_state:
+        st.session_state["steering"] = "Левый руль"
+    
+    # Дата отчета возвращается на "сегодня"
+    if "date_otcheta" in st.session_state:
+        st.session_state["date_otcheta"] = datetime.now().strftime("%d.%m.%Y")
+        
+    # Сброс текстовых блоков
+    st.session_state.damage_text = DEFAULT_DAMAGE_SUFFIX
+    st.session_state.repair_text = f"Для восстановления требуется выполнить комплекс слесарно-кузовных, рихтовочных и малярно-окрасочных работ с применением расходных материалов, с последующей сборкой и регулировкой навесных элементов.\n{DEFAULT_REPAIR_SUFFIX}"
+
+# =========================================================
+# ИНТЕРФЕЙС ПРИЛОЖЕНИЯ
+# =========================================================
+
+st.title("🚗 Главное рабочее место оценщика")
+st.markdown("Заполните данные и прикрепите готовый фотоотчет от эксперта.")
 
 if os.path.exists(TEMPLATE_NAME):
     st.success(f"✅ Базовый шаблон отчета (`{TEMPLATE_NAME}`) успешно подключен автоматически.")
@@ -53,26 +87,37 @@ else:
     st.warning(f"⚠️ Файл `{TEMPLATE_NAME}` не найден. Загрузите его вручную ниже:")
     template_source = st.file_uploader("Загрузите шаблон отчета", type="docx")
 
-st.header("1. Ввод данных")
+# Шапка с кнопкой очистки
+col_hdr1, col_hdr2 = st.columns([4, 1])
+with col_hdr1:
+    st.header("1. Ввод данных")
+with col_hdr2:
+    st.write("") # Отступ
+    st.button("🧹 Очистить форму", on_click=clear_fields, use_container_width=True, type="secondary")
+
+# Загружаем базу данных для проверки
+df_preview = get_cached_preview()
 
 col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("Общие данные")
-    report_num = st.text_input("Номер отчета:")
-    contract_num = st.text_input("Номер договора:")
+    report_num = st.text_input("Номер отчета:", key="report_num")
+    contract_num = st.text_input("Номер договора:", key="contract_num")
     
-    # --- ИСПРАВЛЕННЫЕ ДАТЫ ---
-    date_ocenki = st.text_input("Дата оценки:") # Это пойдет в Word-документ
+    date_ocenki = st.text_input("Дата оценки:", key="date_ocenki") 
     
+    # Инициализация даты в session_state, если её там нет
     today_str = datetime.now().strftime("%d.%m.%Y")
-    date_otcheta = st.text_input("Дата отчета (только для реестра):", value=today_str) # Это пойдет только в таблицу
-    # -------------------------
+    if "date_otcheta" not in st.session_state:
+        st.session_state.date_otcheta = today_str
+        
+    date_otcheta = st.text_input("Дата отчета (только для реестра):", key="date_otcheta")
     
-    customer = st.text_input("ФИО Заказчика:")
-    address = st.text_input("Адрес регистрации:")
+    customer = st.text_input("ФИО Заказчика:", key="customer")
+    address = st.text_input("Адрес регистрации:", key="address")
     
-    sum_num = st.text_input("Сумма ущерба цифрами:", placeholder="Например: 247300")
+    sum_num = st.text_input("Сумма ущерба цифрами:", placeholder="Например: 247300", key="sum_num")
     
     generated_sum_words = ""
     if sum_num:
@@ -88,32 +133,47 @@ with col1:
         except ValueError:
             generated_sum_words = ""
 
+    # Привязываем перевод к значению, а не ключу, чтобы он менялся динамически
     sum_words = st.text_input("Сумма ущерба прописью:", value=generated_sum_words)
 
 with col2:
     st.subheader("Данные автомобиля и услуги")
-    car_model = st.text_input("Марка, модель:")
-    reg_num = st.text_input("Гос. номер:")
-    vin = st.text_input("VIN код:")
-    tech_passport = st.text_input("Тех. паспорт №:")
-    year = st.text_input("Год выпуска:")
-    engine_vol = st.text_input("Объем ДВС:")
-    color = st.text_input("Цвет кузова:")
+    car_model = st.text_input("Марка, модель:", key="car_model")
+    reg_num = st.text_input("Гос. номер:", key="reg_num")
+    vin = st.text_input("VIN код:", key="vin")
+    tech_passport = st.text_input("Тех. паспорт №:", key="tech_passport")
+    year = st.text_input("Год выпуска:", key="year")
+    engine_vol = st.text_input("Объем ДВС:", key="engine_vol")
+    color = st.text_input("Цвет кузова:", key="color")
     
     col_inner1, col_inner2 = st.columns(2)
     with col_inner1:
-        body_type = st.text_input("Тип кузова:")
+        body_type = st.text_input("Тип кузова:", key="body_type")
     with col_inner2:
-        steering = st.selectbox("Положение руля:", ["Левый руль", "Правый руль"])
+        steering = st.selectbox("Положение руля:", ["Левый руль", "Правый руль"], key="steering")
         
     st.divider()
-    service_cost = st.text_input("💰 Стоимость услуги (заработок, для отчета шефу):", placeholder="Например: 5000")
+    service_cost = st.text_input("💰 Стоимость услуги (заработок, для отчета шефу):", placeholder="Например: 5000", key="service_cost")
 
-# =========================================================
-# БАЗА ШАБЛОНОВ ДЛЯ ОПИСАНИЯ
-# =========================================================
-DEFAULT_DAMAGE_SUFFIX = "Дефектный акт на транспортное средство на дату оценки не предоставлялся. Оценка технического состояния произведена без учёта скрытых дефектов."
-DEFAULT_REPAIR_SUFFIX = "После завершения ремонтно-восстановительных работ необходим контроль геометрии кузова, зазоров навесных элементов и качества ЛКП. Контроль выполняется организацией, осуществляющей ремонт."
+# --- СИСТЕМА ПРОВЕРКИ ДУБЛИКАТОВ ---
+if df_preview is not None and not df_preview.empty:
+    existing_reports = [str(x).strip().lower() for x in df_preview.get("Номер отчета", [])]
+    existing_regs = [str(x).strip().lower() for x in df_preview.get("Госномер", [])]
+    
+    current_report = report_num.strip().lower() if report_num else ""
+    current_reg = reg_num.strip().lower() if reg_num else ""
+    
+    warnings_list = []
+    if current_report and current_report in existing_reports:
+        warnings_list.append(f"Отчет с номером **{report_num}**")
+    if current_reg and current_reg in existing_regs:
+        warnings_list.append(f"Машина с госномером **{reg_num}**")
+        
+    if warnings_list:
+        st.error(f"⚠️ **ВНИМАНИЕ! ВОЗМОЖНАЯ ОШИБКА!**\n\n{' и '.join(warnings_list)} уже числятся в базе Google Sheets!\n\nЕсли вы начали оформлять нового клиента, скорее всего, вы **забыли очистить форму** и данные перемешались. Нажмите серую кнопку **«🧹 Очистить форму»** в самом верху.")
+# -----------------------------------
+
+st.header("2. Описание повреждений и ремонта")
 
 DAMAGE_TEMPLATES = {
     "--- Выберите шаблон ---": "",
@@ -168,8 +228,6 @@ def add_to_repair():
         else:
             st.session_state.repair_text = current + "\n" + new_phrase if current else new_phrase
 
-st.header("2. Описание повреждений и ремонта")
-
 col_dmg, col_rep = st.columns(2)
 with col_dmg:
     st.selectbox("Конструктор осмотра:", list(DAMAGE_TEMPLATES.keys()), key="dmg_selector")
@@ -209,7 +267,7 @@ if template_source is not None:
             context = {
                 "REPORT_NUM": report_num,
                 "CONTRACT_NUM": contract_num,
-                "DATE": date_ocenki, # <--- В Word передается именно ДАТА ОЦЕНКИ
+                "DATE": date_ocenki,
                 "CUSTOMER_NAME": customer,
                 "ADDRESS": address,
                 "CAR_MODEL": car_model,
@@ -240,13 +298,11 @@ if template_source is not None:
             buffer.seek(0)
             
             # --- ЗАПИСЬ СТРОКИ НАПРЯМУЮ В GOOGLE SHEETS ---
-            # Здесь используются обе даты для отправки в таблицу шефу
             row_to_insert = [report_num, car_model, reg_num, date_ocenki, date_otcheta, service_cost]
-            
             success = append_to_google_sheets(row_to_insert)
-            # ---------------------------------------------
-
+            
             if success:
+                get_cached_preview.clear() # Сбрасываем кэш, чтобы таблица слева сразу обновилась!
                 st.success("✅ Отчет создан! Данные мгновенно улетели в Google Sheets.")
             else:
                 st.warning("⚠️ Отчет Word создан, но не удалось записать строку в Google Sheets. Проверьте логи.")
@@ -269,12 +325,11 @@ if template_source is not None:
 st.sidebar.title("📊 Живой отчет для шефа")
 st.sidebar.markdown("Данные подгружаются напрямую из облака Google Sheets.")
 
-df_preview = get_google_sheets_preview()
+df_preview = get_cached_preview() # Используем быструю кэшированную версию
 if df_preview is not None and not df_preview.empty:
     st.sidebar.dataframe(df_preview, use_container_width=True)
     st.sidebar.success("🟢 Синхронизация с облаком активна")
     
-    # --- СОЗДАЕМ НАСТОЯЩИЙ EXCEL ДЛЯ СКАЧИВАНИЯ ---
     excel_buffer = io.BytesIO()
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
         df_preview.to_excel(writer, index=False, sheet_name='Реестр')
@@ -287,6 +342,5 @@ if df_preview is not None and not df_preview.empty:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
-    # ----------------------------------------------
 else:
     st.sidebar.info("Таблица пуста или еще не подключена в Secrets.")
