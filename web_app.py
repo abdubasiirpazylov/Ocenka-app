@@ -15,6 +15,21 @@ TEMPLATE_NAME = "образец отчета1.docx"
 
 st.set_page_config(page_title="Генератор Отчетов - Гарант Оценка", layout="wide")
 
+# =========================================================
+# БАЗА ДАННЫХ АДМИНИСТРАТИВНОГО ДЕЛЕНИЯ КЫРГЫЗСТАНА
+# =========================================================
+KG_REGIONS = {
+    "г. Бишкек": ["Ленинский район", "Октябрьский район", "Первомайский район", "Свердловский район"],
+    "г. Ош": ["Центральный", "Амир-Тимур", "Толойкон", "Керме-Тоо", "Жапалак"],
+    "Чуйская область": ["Аламудунский район", "Ысык-Атинский район", "Сокулукский район", "Московский район", "Панфиловский район", "Жайылский район", "Кеминский район", "Чуйский район", "г. Токмок"],
+    "Ошская область": ["Кара-Сууский район", "Ноокатский район", "Узгенский район", "Алайский район", "Араванский район", "Чон-Алайский район", "Кара-Кулджинский район"],
+    "Джалал-Абадская область": ["Сузакский район", "Базар-Коргонский район", "Ноокенский район", "Аксыйский район", "Ала-Букинский район", "Чаткальский район", "Токтогульский район", "Тогуз-Тороуский район", "г. Джалал-Абад", "г. Кара-Куль", "г. Таш-Кумыр", "г. Майлуу-Суу"],
+    "Иссык-Кульская область": ["Иссык-Кульский район", "Тюпский район", "Ак-Суйский район", "Джети-Огузский район", "Тонский район", "г. Каракол", "г. Балыкчы"],
+    "Нарынская область": ["Нарынский район", "Ат-Башинский район", "Ак-Талинский район", "Жумгальский район", "Кочкорский район", "г. Нарын"],
+    "Баткенская область": ["Баткенский район", "Кадамжайский район", "Лейлекский район", "г. Баткен", "г. Кызыл-Кыя", "г. Сулюкта"],
+    "Таласская область": ["Таласский район", "Бакай-Атинский район", "Кара-Бууринский район", "Манасский район", "г. Талас"]
+}
+
 # --- ФУНКЦИИ ДЛЯ РАБОТЫ С GOOGLE SHEETS И КЭШЕМ ---
 def get_google_sheets_client():
     scopes = [
@@ -77,9 +92,9 @@ DEFAULT_REPAIR_SUFFIX = "После завершения ремонтно-вос
 def clear_fields():
     fields_to_clear = [
         "report_num", "contract_num", "date_ocenki", "customer",
-        "address", "sum_num", "car_model", "reg_num", "vin",
-        "tech_passport", "year", "engine_vol", "color", "body_type",
-        "service_cost"
+        "aymak_input", "street_address", "sum_num", "car_model", 
+        "reg_num", "vin", "tech_passport", "year", "engine_vol", 
+        "color", "body_type", "service_cost"
     ]
     for f in fields_to_clear:
         if f in st.session_state:
@@ -115,7 +130,6 @@ with col_hdr2:
     st.write("") 
     st.button("🧹 Очистить форму", on_click=clear_fields, use_container_width=True, type="secondary")
 
-# Загружаем обе таблицы
 df_preview = get_cached_preview()
 df_db = get_cached_db()
 
@@ -125,21 +139,42 @@ with col1:
     st.subheader("Общие данные")
     report_num = st.text_input("Номер отчета:", key="report_num")
     contract_num = st.text_input("Номер договора:", key="contract_num")
-    
     date_ocenki = st.text_input("Дата оценки:", key="date_ocenki") 
     
     today_str = datetime.now().strftime("%d.%m.%Y")
     if "date_otcheta" not in st.session_state:
         st.session_state.date_otcheta = today_str
-        
     date_otcheta = st.text_input("Дата отчета (только для реестра):", key="date_otcheta")
     
     customer = st.text_input("ФИО Заказчика:", key="customer")
-    address = st.text_input("Адрес регистрации:", key="address")
+    
+    # --- УМНЫЙ И СВЕРХЛЕГКИЙ БЛОК АДРЕСА С АЙМАКОМ ---
+    st.markdown("**Адрес регистрации**")
+    c_geo1, c_geo2, c_geo3 = st.columns(3)
+    with c_geo1:
+        selected_region = st.selectbox("Область / Город:", list(KG_REGIONS.keys()), key="region_select")
+    with c_geo2:
+        selected_district = st.selectbox("Район / Округ:", KG_REGIONS[selected_region], key="district_select")
+    with c_geo3:
+        # Дополнительное поле для села или аймака
+        aymak = st.text_input("Село / Айыл аймагы:", placeholder="Например: с. Ленинское", key="aymak_input")
+        
+    street_detail = st.text_input("Улица, дом, квартира:", placeholder="Например: ул. Токтогула, д. 42, кв. 5", key="street_address")
+    
+    # Умная сборка финальной строки адреса
+    if aymak.strip():
+        full_address = f"Кыргызская Республика, {selected_region}, {selected_district}, {aymak.strip()}, {street_detail.strip()}"
+    else:
+        full_address = f"Кыргызская Республика, {selected_region}, {selected_district}, {street_detail.strip()}"
+        
+    # Убираем возможные лишние запятые в конце, если улица не заполнена
+    full_address = full_address.strip(", ")
+    
+    st.caption(f"**Итоговый адрес для отчета:** {full_address}")
+    # -----------------------------------------------------
     
     sum_num = st.text_input("Сумма ущерба цифрами:", placeholder="Например: 247300", key="sum_num")
     
-    # --- СУММА ТЕПЕРЬ СТРОГО С МАЛЕНЬКОЙ БУКВЫ ---
     generated_sum_words = ""
     if sum_num:
         try:
@@ -326,7 +361,6 @@ if template_source is not None:
                 template_source.seek(0)
             doc = DocxTemplate(template_source)
             
-            # ВАЖНОЕ ИСПРАВЛЕНИЕ: Сброс памяти фотоотчета для предотвращения смешивания файлов
             if photo_report_doc is not None:
                 photo_report_doc.seek(0)
                 subdoc_photo = doc.new_subdoc(photo_report_doc)
@@ -338,7 +372,7 @@ if template_source is not None:
                 "CONTRACT_NUM": contract_num,
                 "DATE": date_ocenki,
                 "CUSTOMER_NAME": customer,
-                "ADDRESS": address,
+                "ADDRESS": full_address, 
                 "CAR_MODEL": car_model,
                 "REG_NUM": reg_num,
                 "VIN": vin,
