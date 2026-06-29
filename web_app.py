@@ -4,6 +4,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 import io
 import os
+import re 
 from num2words import num2words
 import pandas as pd
 from datetime import datetime
@@ -138,17 +139,21 @@ with col1:
     
     sum_num = st.text_input("Сумма ущерба цифрами:", placeholder="Например: 247300", key="sum_num")
     
+    # --- СУММА ТЕПЕРЬ СТРОГО С МАЛЕНЬКОЙ БУКВЫ ---
     generated_sum_words = ""
     if sum_num:
         try:
-            clean_num_str = sum_num.replace(" ", "").replace(",", ".")
+            clean_num_str = "".join(c for c in sum_num if c.isdigit() or c in ".,").replace(",", ".")
             if "." in clean_num_str:
                 number_val = float(clean_num_str)
                 integer_part = int(number_val)
-                generated_sum_words = num2words(integer_part, lang='ru').capitalize()
-            else:
+                generated_sum_words = num2words(integer_part, lang='ru').lower()
+            elif clean_num_str:
                 number_val = int(clean_num_str)
-                generated_sum_words = num2words(number_val, lang='ru').capitalize()
+                generated_sum_words = num2words(number_val, lang='ru').lower()
+                
+            generated_sum_words = re.sub(r'[a-zA-Z|]', '', generated_sum_words)
+            generated_sum_words = " ".join(generated_sum_words.split())
         except ValueError:
             generated_sum_words = ""
 
@@ -182,7 +187,6 @@ existing_regs = set()
 existing_vins = set()
 existing_passports = set()
 
-# 1. Считываем данные с первого листа (Отчет шефу)
 if df_preview is not None and not df_preview.empty:
     actual_cols_1 = {str(col).strip().lower(): col for col in df_preview.columns}
     col_rep1 = actual_cols_1.get("номер отчета")
@@ -193,7 +197,6 @@ if df_preview is not None and not df_preview.empty:
     if col_reg1: 
         existing_regs.update([str(x).strip().lower() for x in df_preview[col_reg1].dropna() if str(x).strip()])
 
-# 2. Считываем данные со второго листа (База проверок)
 if df_db is not None and not df_db.empty:
     actual_cols_2 = {str(col).strip().lower(): col for col in df_db.columns}
     col_rep2 = actual_cols_2.get("номер отчета")
@@ -210,7 +213,6 @@ if df_db is not None and not df_db.empty:
     if col_pass2: 
         existing_passports.update([str(x).strip().lower() for x in df_db[col_pass2].dropna() if str(x).strip()])
 
-# 3. Проверяем введенные данные
 current_report = report_num.strip().lower() if report_num else ""
 current_reg = reg_num.strip().lower() if reg_num else ""
 current_vin = vin.strip().lower() if vin else ""
@@ -320,9 +322,13 @@ if template_source is not None:
             st.stop()
             
         try:
+            if not isinstance(template_source, str):
+                template_source.seek(0)
             doc = DocxTemplate(template_source)
             
+            # ВАЖНОЕ ИСПРАВЛЕНИЕ: Сброс памяти фотоотчета для предотвращения смешивания файлов
             if photo_report_doc is not None:
+                photo_report_doc.seek(0)
                 subdoc_photo = doc.new_subdoc(photo_report_doc)
             else:
                 subdoc_photo = "Таблица с фотографиями не была приложена к отчету."
